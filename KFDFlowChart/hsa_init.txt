@@ -1,0 +1,39 @@
+hsa_init()：由开发者调用，是初始化HSA运行环境的必然步骤
+	API\Runtime.cpp\Runtime::Acquire()：调用Runtime类的构造函数以及装载环境
+		API\Runtime.cpp\Runtime::Runtime()：构造函数，构造Runtime类对象runtime_singleton_（单例设计模式）。
+		API\Runtime.cpp\Runtime::Load():装载环境，该函数由刚才构造的runtime_singleton_调用
+			API\Amd_topology.cpp\amd::Load():针对AMD的装载函数
+				kmt\Openclose.c\hsaKmtOpenKFD():进入kmt层，打开KFD设备
+					linux\open(kfd_device_name, O_RDWR | O_CLOEXEC)：内核态函数，打开设备
+						如果open函数调用成功：
+							kmt\fmm.c\fmm_init_process_apertures():初始化process的内存空间（aperture指在doorbell通知范围内的内存空间）
+							用户态核心态分界线-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+								kfd\kfd_chardev.c\kfd_ioctl_get_process_apertures(struct file *filp,struct kfd_process *p, void *data)
+									核心流程：规定内存空间的起点和界限。下列赋值中lds指local data share,是AMD的共享内存，gpuvm指显存的虚拟映射，scratch指GPU缓存。
+				API\amd_topology.cpp\BuildTopology()：初始化描述拓扑结构的表
+					kmt\version.c\hsaKmtAcquireSystemProperties(&props):获得系统信息并存储到props中
+					用户态核心态分界线-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+						kfd\kfd_chardev.c\kfd_ioctl_get_version(struct file *filep, struct kfd_process *p,void *data)
+							获得当前拓扑结构的版本信息，如果需要更新，根据获得的props对所有系统内所有node循环调用下列操作
+								kmt\hsaKmtGetNodeProperties(node_id, &node_prop):根据node_id获得相关信息并存储在node_prop中
+								kmt\hsaKmtGetNodeCacheProperties（node_id,processor_id,num_caches,&prop）:根据node id和processor id得相关信息并存储在prop中
+								API\amd_cpu_agent.cpp\CpuAgent(node_id, node_prop, cache_props)：构造函数，参数是根据前述调用获得的
+								API\Runtime.cpp\RegisterAgent(cpu)：注册登记刚构造的cpu
+									STL\agents_.push_back(cpu):将该cpu加入到Runtime类维护的agent列表（agents_为vector类型）中
+								API\amd_gpu_agent.cpp\GpuAgent(node_id, node_prop, cache_props)：构造函数，参数是根据前述调用获得的
+								RegisterAgent(gpu)：注册登记刚构造的gpu
+									STL\agents_.push_back(gpu)：将该gpu加入到Runtime类维护的agent列表（agents_为vector类型）中
+								MemoryRegion(false, *gpu, mem_props[mem_idx])：构造函数，目的是获得一块内存空间，用MemoryRegion类对象维护
+								RegisterMemoryRegion(region)：注册登记刚构造的内存空间region
+									STL\regions_.push_back(region)：将该region加入到Runtime类维护的region列表（regions_为vector类型）中
+			kmt\time.c\hsaKmtGetClockCounters(0, &clocks):缓存系统时钟频率并存储在Runtime类对象runtime_singleton_的sys_clock_freq_中
+			用户态核心态分界线-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+				kfd\kfd_chardev.c\kfd_ioctl_get_clock_counters(struct file *filep,struct kfd_process *p, void *data):获得处理器时钟并通过data回传
+					kfd\kfd_topology.c\kfd_device_by_id(args->gpu_id):根据GPU找到设备并存储在dev中
+					kgd\get_gpu_clock_counter(dev->kgd)：根据dev由kgd获得GPU时钟
+					linux\timespec64_to_ns(&time)：获得CPU时钟
+			API\Runtime.cpp\Runtime::LoadTools():装载库函数
+				API\os_linux.cpp\GetEnvVar("HSA_TOOLS_LIB"):获得类库名称存储在tool_names中
+				API\Runtime.cpp\parse_tool_names（tools_names）:解析类库名称存储在names中
+				对names指出的所有类库函数循环调用：
+					STL\tool_libs_.push_back(tool)：将当前遍历到的库函数加入到Runtime类维护的tool_lib列表（tool_libs_为vector类型）中

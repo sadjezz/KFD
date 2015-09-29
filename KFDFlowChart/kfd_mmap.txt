@@ -1,0 +1,6 @@
+kfd_mmap
+	先调用kfd_get_process(current)：获得要做地址映射的process
+	如果要映射的是doorbell，则调用kfd_doorbell_mmap(process, vma)：这里的vma是doorbell所在的那段内存空间
+		其中调用了io_remap_pfn_range：将doorbell从物理地址空间映射到进程空间。
+	否则如果要映射的是event，则调用kfd_event_mmap(process, vma)：这里的vma是event所在的那段内存空间
+		同理，其中调用了io_remap_pfn_range：将event从物理地址空间映射到进程空间

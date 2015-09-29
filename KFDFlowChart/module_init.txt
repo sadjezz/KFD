@@ -1,0 +1,27 @@
+module_init(kfd_module_init);
+	kfd_module_init
+		kfd_topology_init
+			kfd_topology_get_crat_acpi(crat_image, &image_size)，通过这一方法从ACPI表中解析出CRAT表并存储到crat_image中。
+				kfd_parse_crat_table(crat_image)解析刚获得的crat表。并将刚获得的crat_image转换成crat_header结构体的链表，命名为crat_table。
+					kfd_populated_cu_info_cpu:解析crat_table然后根据表的内容为CPU的CU（compute unit）填充计算单元基本信息
+					kfd_populated_cu_info_gpu:解析crat_table然后根据表的内容为GPU的CU（compute unit）填充计算单元基本信息
+					kfd_parse_subtype:解析CRAT表中的子表信息，包括CU计算单元信息、内存单元信息、缓存cache信息、IO端口信息等
+					遍历这个链表中的前num_domains项：
+						每遍历到一个新的节点，就调用kfd_create_topology_device。在这个函数中会把新发现的device加入到全局topo表里。
+					遍历后面的crat_subtype_generic类型节点：
+						如果type项指明是cache，则调用kfd_parse_subtype_cache	
+							进入该函数后填充cache的相关信息到kfd_cache_properties结构体中并加入全局链表，并区分是数据缓存还是指令缓存还是CPU缓存还是SIMD缓存。
+						如果type项指明是cu，则调用kfd_parse_subtype_cu	
+						如果解读结果显示内含CPU,调用kfd_populated_cu_info_cpu(dev, cu)
+						进入该函数后填充cu的相关信息并填充到dev的node_props项中，除此之外还用flags做“与”操作。检查是否内含IOMMU。并据此填写相关信息。
+							如果解读结果显示内含GPU,调用kfd_populated_cu_info_gpu(dev, cu)
+						进入该函数后也是填充cu的相关信息并填充到dev的node_props项中，填充信息包括用flags做“与”操作。检查是否为热插拔设备。并据此填写相关信息。
+						如果type项指明是iolink，则调用kfd_parse_subtype_iolink
+							进入该函数后填充IO设备的相关信息到kfd_iolink_properties结构体中并加入全局链表，解析信息包括版本、延迟、带宽等。
+						如果type项指明是mem，则调用kfd_parse_subtype_mem	
+							进入该函数后填充IO设备的相关信息到kfd_mem_properties结构体中并加入全局链表，解析信息包括是否为热插拔、是否是系统内存、是否是共享内存等。
+		
+注释：
+CRAT是用来记录组件和资源的绑定关系的。这里组件是指硬件的物理实体；资源是指硬件的软件抽象。而这种绑定关系无外乎四种：内存、缓存、IO设备、计算单元（cu）。
+CRAT的作用就是记录硬件的接口信息以供上层通过这一接口使用硬件。
+CRAT是ACPI表的子表，除了CRAT提供的功能之外ACPI的功能还包括硬件挂载、热插拔设备的discover、电源管理和监视等。

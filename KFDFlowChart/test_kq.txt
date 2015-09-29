@@ -1,0 +1,2 @@
+test_kq:该函数由__attribute__((unused)) 修饰，是一个内部测试所用的函数，没有上层调用关系。其功能是用来测试kernel queue上与packet相关的基本操作的。
+	acquire_packet_buffer(struct kernel_queue *kq,size_t packet_size_in_dwords, unsigned int **buffer_ptr)：为kernel queue分配packet buffer，大小由该函数的第二个参数指明，分配后的内存空间的指针赋值给第三个指针。最终这个指针用来直接向kernel queue中写入packet。

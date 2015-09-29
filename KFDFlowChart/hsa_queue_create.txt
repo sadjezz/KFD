@@ -1,0 +1,83 @@
+hsa_queue_create（）:最顶层API调用
+	GpuAgent::QueueCreate（）API内部调用
+		//创建HW AQL队列
+		HwAqlCommandProcessor（）：AQL处理器的构造函数
+			hsaKmtCreateQueue：为该CP创建队列
+---------------------------------------------------------------上面的是用户态
+				linux内核调用\malloc(sizeof(struct queue))：分配队列空间
+				系统调用\memset(q, 0, sizeof(*q))：将分配的内存空间绑定到队列上
+				kfd_ioctl_create_queue（）：调用kfd驱动创建队列
+					set_queue_properties_from_user：设置队列属性
+					kfd_device_by_id：找到当前设备
+					kfd_bind_process_to_device：将当前设备与当前process绑定
+							kfd_get_process_device_data：获得pdd
+							检查pdd是否存在，如果不存在对应pdd返回false
+							amd_iommu_bind_pasid(dev->pdev, p->pasid, p->lead_thread)：通过iommu绑定PASID，使得device可以访问到process的虚拟内存空间
+								LINUX/mm/mmu_notifier.c/mmu_notifier_register(&pasid_state->mn, mm)：将pasid相关的各项信息通过pasid_state结构体登记到mmu上。
+						pqm_create_queue：根据各项属性信息创建队列
+							kfd_get_process_device_data：获得pdd
+							检查pdd，如果是debug模式则创建DIQ。
+							dev->dqm->ops.register_process(dev->dqm, &pdd->qpd)：将process登记到device queue manager上
+							LINUX调用\kzalloc(sizeof(struct process_queue_node), GFP_KERNEL)：分配process queue node空间并初始化
+							检查队列类型：
+								如果是SMDA：对应的队列创建尚未实现（截至3.19）
+								如果是HIQ：
+									create_cp_queue(pqm, dev, &q, &q_properties, f, *qid)
+										kfd_queue_id_to_doorbell(dev, pqm->process, qid)：根据dev、process、queue设置doorbell偏移量并返回。doorbell与queue是一一对应的，对应关系存储在doorbell page中，doorbell page是一段连续的地址空间，并且其中doorbell与queue的对应关系是严格按顺序排列的。
+										init_queue(q, *q_properties)：初始化队列（注意这里是初始化用户态队列）
+											kzalloc(sizeof(struct queue), GFP_KERNEL)：为队列分配空间并返回指针
+									dev->dqm->ops.create_queue(dev->dqm, q, &pdd->qpd,&q->properties.vmid)：这个地方回调的函数取决于dqm结构体创建时的注册绑定
+										如果是cp分配策略
+										start_cpsch(struct device_queue_manager *dqm)：开始CP调度策略。
+											pm_init(&dqm->packets, dqm)：初始化packet manager
+												kernel_queue_init(dqm->dev, KFD_QUEUE_TYPE_HIQ)：初始化kernel queue并将结果赋值给调用该函数的pm的kernel queue
+													针对ASIC芯片类型初始化队列，目前有cik和vi两种
+													initialize(kq, dev, type, KFD_KERNEL_QUEUE_SIZE)函数指针，根据情况调用不同策略的初始化函数
+														initialize_cpsch(struct device_queue_manager *dqm)：调用对应芯片的初始化函数
+											set_sched_resources(struct device_queue_manager *dqm)：为device_queue_manager设置调度资源。设置好以后通过pm_send_set_resources将调度资源传递给kernel queue.
+												pm_send_set_resources(struct packet_manager *pm,struct scheduling_resources *res)：将上层传递进来的res资源写入kernel queue，写入是通过packet
+													acquire_packet_buffer(struct kernel_queue *kq,size_t packet_size_in_dwords, unsigned int **buffer_ptr)：为kernel queue分配packet buffer，大小由该函数的第二个参数指明，分配后的内存空间的指针赋值给第三个指针。最终这个指针用来直接向kernel queue中写入packet。
+													submit_packet(struct kernel_queue *kq)：向kernel queue提交packet，提交方式是通过doorbell机制
+														write_kernel_doorbell(kq->queue->properties.doorbell_ptr,kq->pending_wptr)：将kq中的当前packet（即kq->pending_wptr）写入当前kq的doorbell（kq->queue->properties.doorbell_ptr是一个u32 __iomem的指针）中。
+															writel(value, db)：将value写入db。该函数是linux系统调用
+											如果set_sched_resources执行失败
+												pm_uninit(&dqm->packets)：注销packet manager
+													kernel_queue_uninit(pm->priv_queue)：注销kernel queue
+														uninitialize(kq):根据情况调用对应芯片的注销函数
+															kq->mqd->uninit_mqd :注销mqd描述符
+															kfd_release_kernel_doorbell(kq->dev,kq->queue->properties.doorbell_ptr)：释放内核态doorbell，由doorbell指针指明哪个doorbell被释放
+															uninit_queue(kq->queue)：使用kfree释放kernel queue
+											execute_queues_cpsch(dqm, true)：执行CP队列调度策略
+												pm_send_runlist(&dqm->packets, &dqm->queues)：向队列发送要运行的packets
+													pm_create_runlist_ib：创建packet运行队列init block
+														pm_allocate_runlist_ib:分配packet运行队列init block所需的内存空间
+															pm_calc_rlib_size：根据是否over subscription计算packet运行队列init block所需的内存空间占用大小。如果是over subscription的情况，则用链式结构，此时需要计算出扩大所需的空间。
+													acquire_packet_buffer(struct kernel_queue *kq,size_t packet_size_in_dwords, unsigned int **buffer_ptr)：为kernel queue分配packet buffer，大小由该函数的第二个参数指明，分配后的内存空间的指针赋值给第三个指针。最终这个指针用来直接向kernel queue中写入packet。
+													pm_create_runlist：创建packet运行队列
+													submit_packet：提交packet
+													如果创建runlist失败
+														rollback_packet(pm->priv_queue)回滚kernel queue上的packet指针
+													如果创建runlist的init block失败
+														pm_release_ib(pm);释放分配的init block
+										否则
+											create_queue_nocpsch：执行非CP的分配调度策略
+												print_queue：打印当前队列情况
+												allocate_vmid(dqm, qpd, q):分配VMID
+													set_pasid_vmid_mapping：设置PASID-VMID映射关系
+													program_sh_mem_settings：设置共享内存属性
+												create_compute_queue_nocpsch：创建运算队列
+													get_mqd_manager_nocpsch：为当前dqm找到mqd管理器并返回
+														mqd_manager_init：在没有对应mqd管理器时创建mqd管理器。创建函数取决于ASIC芯片类型
+													allocate_hqd：为当前队列分配hqd描述符
+														get_pipes_num：获得当前dqm管理器拥有的流水线总数
+													init_mqd：初始化mqd
+														update_mqd：更新刚创建的mqd到指定队列的mqd_manager上
+													如果初始化mqd描述符失败
+														deallocate_hqd：撤销分配hqd
+													load_mqd：根据刚创建的mqd装载hqd
+													如果装载失败
+														deallocate_hqd：撤销分配hqd
+														uninit_mqd：撤销分配mqd
+												如果创建队列失败
+													deallocate_vmid：撤销分配VMID
+														set_pasid_vmid_mapping：取消PASID-VMID映射关系

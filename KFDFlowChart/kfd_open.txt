@@ -1,0 +1,8 @@
+暂未在用户态中找到调用kfd_open的函数
+kfd_open:为调用该函数的进程打开KFD设备
+	kfd_create_process：为thread创建kfd_process
+		find_process(const struct task_struct *thread)：通过task_struct类型的thread找到对应kfd_process
+			find_process_by_mm(thread->mm):遍历kfd_processes_table，通过线程的mm数据项找到对应的kfd_process
+		create_process：如果find_process没有找到kfd_process则根据thread的mm数据项创建kfd_process
+			kfd_pasid_alloc：分配pasid并返回
+		
