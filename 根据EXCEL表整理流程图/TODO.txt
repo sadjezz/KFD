@@ -1,9 +1,0 @@
-//TODO
-pm_send_unmap_queue
-	acquire_packet_buffer(struct kernel_queue *kq,size_t packet_size_in_dwords, unsigned int **buffer_ptr)：为kernel queue分配packet buffer，大小由该函数的第二个参数指明，分配后的内存空间的指针赋值给第三个指针。最终这个指针用来直接向kernel queue中写入packet。
-
-//TODO
-pm_send_query_status
-	acquire_packet_buffer(struct kernel_queue *kq,size_t packet_size_in_dwords, unsigned int **buffer_ptr)：为kernel queue分配packet buffer，大小由该函数的第二个参数指明，分配后的内存空间的指针赋值给第三个指针。最终这个指针用来直接向kernel queue中写入packet。
-
-
